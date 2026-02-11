@@ -1,0 +1,6 @@
+Django==6.0.2
+djangorestframework==3.16.1
+drf-spectacular==0.28.0
+python-dotenv==1.1.1
+requests==2.32.5
+pgeocode==0.5.0
