@@ -7,7 +7,7 @@
    - geocodes start and end (`services/geocoding.py`)
    - fetches one route (`services/routing.py`)
    - computes candidate stations near route (`services/station_locator.py`)
-   - computes optimal purchase plan (`domain/optimizer.py`)
+   - filters candidates by detour threshold and computes optimized purchase plan (`domain/optimizer.py`)
 4. View returns normalized JSON for clients.
 
 ## Layering
@@ -22,6 +22,7 @@
 - local city/state geocoding first to avoid remote API calls
 - station pre-filtering by route bounding box + corridor
 - station candidate pruning by distance buckets
+- optional detour cap, minimum stop gallons, and stop-penalty tuning for practical routing
 
 ## Reliability strategy
 - provider mode `auto` (Mapbox fallback to OSRM)

@@ -91,6 +91,12 @@ Important environment variables:
 - `MAP_PROVIDER=auto` (tries Mapbox then OSRM)
 - `MAPBOX_ACCESS_TOKEN=...`
 - `ROUTE_CORRIDOR_MILES=60`
+- `DEFAULT_MAX_STOP_DETOUR_MILES=20`
+- `DEFAULT_MIN_STOP_GALLONS=1.5`
+- `DEFAULT_STOP_PENALTY_USD=1.5`
+- `ENFORCE_ASSIGNMENT_CONSTRAINTS=true`
+- `ASSIGNMENT_REQUIRED_MPG=10`
+- `ASSIGNMENT_REQUIRED_MAX_RANGE_MILES=500`
 - `EXTERNAL_API_TIMEOUT_SECONDS=15`
 
 ## Database + data import
@@ -124,15 +130,34 @@ python manage.py runserver
 ## API
 ### `POST /api/trip-plan/`
 
+Assignment constraints enforced by default:
+- `mpg` must be `10`
+- `max_range_miles` must be `500`
+
 Request body:
 ```json
 {
   "start_location": "Chicago, IL",
   "finish_location": "Dallas, TX",
   "mpg": 10,
-  "max_range_miles": 500
+  "max_range_miles": 500,
+  "route_mode": "direct",
+  "max_stop_detour_miles": 20,
+  "min_stop_gallons": 1.5,
+  "stop_penalty_usd": 1.5
 }
 ```
+
+`route_mode` options:
+- `direct` (default): one route from origin to destination, stops optimized near this route
+- `via_stops`: computes an additional waypoint geometry through selected fuel stops for map visualization
+
+Optimization tuning fields:
+- `max_stop_detour_miles` (float, nullable): maximum station offset from route used for planning
+- `min_stop_gallons` (float): discourages tiny top-up stops when feasible
+- `stop_penalty_usd` (float): per-stop virtual penalty to prefer fewer stops when cost difference is small
+- Set `min_stop_gallons=0` and `stop_penalty_usd=0` for strict cost-only behavior.
+- To allow non-assignment vehicle values, set `ENFORCE_ASSIGNMENT_CONSTRAINTS=false`.
 
 Example:
 ```bash
@@ -142,7 +167,11 @@ curl -X POST http://127.0.0.1:8000/api/trip-plan/ \
     "start_location": "Chicago, IL",
     "finish_location": "Dallas, TX",
     "mpg": 10,
-    "max_range_miles": 500
+    "max_range_miles": 500,
+    "route_mode": "via_stops",
+    "max_stop_detour_miles": 20,
+    "min_stop_gallons": 1.5,
+    "stop_penalty_usd": 1.5
   }'
 ```
 

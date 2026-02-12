@@ -33,6 +33,13 @@ def env_float(name: str, default: float) -> float:
     return float(raw_value)
 
 
+def env_optional_float(name: str, default: float | None = None) -> float | None:
+    raw_value = os.getenv(name)
+    if raw_value is None or raw_value.strip() == "":
+        return default
+    return float(raw_value)
+
+
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-insecure-secret-key-change-me")
 DEBUG = env_bool("DEBUG", True)
 ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", "127.0.0.1,localhost,testserver")
@@ -145,6 +152,12 @@ NOMINATIM_API_BASE_URL = os.getenv(
 )
 EXTERNAL_API_TIMEOUT_SECONDS = env_int("EXTERNAL_API_TIMEOUT_SECONDS", 15)
 ROUTE_CORRIDOR_MILES = env_float("ROUTE_CORRIDOR_MILES", 60.0)
+DEFAULT_MAX_STOP_DETOUR_MILES = env_optional_float("DEFAULT_MAX_STOP_DETOUR_MILES", 20.0)
+DEFAULT_MIN_STOP_GALLONS = env_float("DEFAULT_MIN_STOP_GALLONS", 1.5)
+DEFAULT_STOP_PENALTY_USD = env_float("DEFAULT_STOP_PENALTY_USD", 1.5)
+ENFORCE_ASSIGNMENT_CONSTRAINTS = env_bool("ENFORCE_ASSIGNMENT_CONSTRAINTS", True)
+ASSIGNMENT_REQUIRED_MPG = env_float("ASSIGNMENT_REQUIRED_MPG", 10.0)
+ASSIGNMENT_REQUIRED_MAX_RANGE_MILES = env_float("ASSIGNMENT_REQUIRED_MAX_RANGE_MILES", 500.0)
 GEOLOOKUP_USER_AGENT = os.getenv(
     "GEOLOOKUP_USER_AGENT",
     "spotter-api/1.0 (assignment)",

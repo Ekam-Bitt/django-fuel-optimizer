@@ -3,7 +3,7 @@ from unittest.mock import Mock, patch
 from django.core.cache import cache
 from django.test import SimpleTestCase, override_settings
 
-from planner.services.routing import fetch_route
+from planner.services.routing import fetch_route, fetch_route_through_points
 
 
 class RoutingServiceTests(SimpleTestCase):
@@ -57,3 +57,31 @@ class RoutingServiceTests(SimpleTestCase):
         if not called_url:
             called_url = mock_get.call_args.args[0]
         self.assertIn("api.mapbox.com/directions", called_url)
+
+    @override_settings(MAP_PROVIDER="mapbox", MAPBOX_ACCESS_TOKEN="token-123", MAPBOX_DIRECTIONS_PROFILE="driving")
+    @patch("planner.services.routing.requests.get")
+    def test_waypoint_route_includes_all_points(self, mock_get):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "code": "Ok",
+            "routes": [
+                {
+                    "distance": 3000,
+                    "duration": 1200,
+                    "geometry": {"coordinates": [[-96.79, 32.77], [-95.37, 29.76], [-97.74, 30.26]]},
+                }
+            ],
+        }
+        mock_get.return_value = response
+
+        fetch_route_through_points(
+            [
+                (32.7763, -96.7969),
+                (29.7604, -95.3698),
+                (30.2672, -97.7431),
+            ]
+        )
+
+        called_url = mock_get.call_args.args[0]
+        self.assertIn("-96.7969,32.7763;-95.3698,29.7604;-97.7431,30.2672", called_url)

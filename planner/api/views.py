@@ -32,6 +32,10 @@ class TripPlanView(APIView):
                 end_location=payload["finish_location"],
                 mpg=payload["mpg"],
                 max_range_miles=payload["max_range_miles"],
+                route_mode=payload["route_mode"],
+                max_stop_detour_miles=payload["max_stop_detour_miles"],
+                min_stop_gallons=payload["min_stop_gallons"],
+                stop_penalty_usd=payload["stop_penalty_usd"],
             )
         except (GeocodingError, RoutingError, FuelPlanningError) as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)

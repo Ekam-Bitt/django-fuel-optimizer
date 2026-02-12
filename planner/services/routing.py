@@ -20,17 +20,9 @@ class RoutingError(Exception):
     pass
 
 
-def _cache_key(
-    provider: str,
-    start_lat: float,
-    start_lon: float,
-    end_lat: float,
-    end_lon: float,
-    profile: str = "",
-) -> str:
-    payload = (
-        f"{provider}:{profile}::{round(start_lat, 5)}:{round(start_lon, 5)}::{round(end_lat, 5)}:{round(end_lon, 5)}"
-    ).encode("utf-8")
+def _cache_key(provider: str, points: list[tuple[float, float]], profile: str = "") -> str:
+    serialized = ";".join(f"{round(lat, 5)}:{round(lon, 5)}" for lat, lon in points)
+    payload = f"{provider}:{profile}::{serialized}".encode("utf-8")
     return f"route::{hashlib.sha256(payload).hexdigest()}"
 
 
@@ -44,18 +36,31 @@ def _request_json(url: str, params: dict[str, str]) -> dict:
     return response.json()
 
 
-def _fetch_mapbox_route(
-    start_lat: float,
-    start_lon: float,
-    end_lat: float,
-    end_lon: float,
-) -> RouteResult:
+def _dedupe_consecutive_points(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    deduped: list[tuple[float, float]] = []
+    for point in points:
+        if not deduped:
+            deduped.append(point)
+            continue
+        prev = deduped[-1]
+        if abs(prev[0] - point[0]) < 1e-7 and abs(prev[1] - point[1]) < 1e-7:
+            continue
+        deduped.append(point)
+    return deduped
+
+
+def _fetch_mapbox_route(points: list[tuple[float, float]]) -> RouteResult:
     token = settings.MAPBOX_ACCESS_TOKEN
     if not token:
         raise RoutingError("MAPBOX_ACCESS_TOKEN is required when MAP_PROVIDER=mapbox")
 
+    if len(points) > 25:
+        raise RoutingError("Mapbox supports up to 25 coordinates per route request")
+
     profile = settings.MAPBOX_DIRECTIONS_PROFILE
-    url = f"https://api.mapbox.com/directions/v5/mapbox/{profile}/{start_lon},{start_lat};{end_lon},{end_lat}"
+    coordinate_string = ";".join(f"{lon},{lat}" for lat, lon in points)
+    url = f"https://api.mapbox.com/directions/v5/mapbox/{profile}/{coordinate_string}"
+
     payload = _request_json(
         url,
         params={
@@ -80,13 +85,10 @@ def _fetch_mapbox_route(
     )
 
 
-def _fetch_osrm_route(
-    start_lat: float,
-    start_lon: float,
-    end_lat: float,
-    end_lon: float,
-) -> RouteResult:
-    url = f"{settings.OSRM_API_BASE_URL}/route/v1/driving/{start_lon},{start_lat};{end_lon},{end_lat}"
+def _fetch_osrm_route(points: list[tuple[float, float]]) -> RouteResult:
+    coordinate_string = ";".join(f"{lon},{lat}" for lat, lon in points)
+    url = f"{settings.OSRM_API_BASE_URL}/route/v1/driving/{coordinate_string}"
+
     payload = _request_json(
         url,
         params={
@@ -116,28 +118,27 @@ def _resolve_provider() -> str:
     return "auto"
 
 
-def fetch_route(
-    start_lat: float,
-    start_lon: float,
-    end_lat: float,
-    end_lon: float,
-) -> RouteResult:
+def fetch_route_through_points(points: list[tuple[float, float]]) -> RouteResult:
+    normalized_points = _dedupe_consecutive_points(points)
+    if len(normalized_points) < 2:
+        raise RoutingError("At least two coordinates are required to build a route")
+
     provider = _resolve_provider()
     candidate_providers = ["mapbox", "osrm"] if provider == "auto" else [provider]
 
     errors: list[str] = []
     for candidate in candidate_providers:
         profile = settings.MAPBOX_DIRECTIONS_PROFILE if candidate == "mapbox" else ""
-        key = _cache_key(candidate, start_lat, start_lon, end_lat, end_lon, profile)
+        key = _cache_key(candidate, normalized_points, profile)
         cached = cache.get(key)
         if cached:
             return cached
 
         try:
             if candidate == "mapbox":
-                result = _fetch_mapbox_route(start_lat, start_lon, end_lat, end_lon)
+                result = _fetch_mapbox_route(normalized_points)
             else:
-                result = _fetch_osrm_route(start_lat, start_lon, end_lat, end_lon)
+                result = _fetch_osrm_route(normalized_points)
         except RoutingError as exc:
             errors.append(f"{candidate}: {exc}")
             if provider != "auto":
@@ -149,3 +150,14 @@ def fetch_route(
 
     detail = "; ".join(errors) if errors else "No routing providers available"
     raise RoutingError(f"Unable to build route: {detail}")
+
+
+def fetch_route(
+    start_lat: float,
+    start_lon: float,
+    end_lat: float,
+    end_lon: float,
+) -> RouteResult:
+    return fetch_route_through_points(
+        points=[(start_lat, start_lon), (end_lat, end_lon)],
+    )

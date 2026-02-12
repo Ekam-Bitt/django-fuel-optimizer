@@ -6,11 +6,20 @@ from planner.domain.optimizer import optimize_fuel_plan
 from planner.domain.types import FuelNode, StopAction
 from planner.services.distance import cumulative_route_distances
 from planner.services.geocoding import geocode_location
-from planner.services.routing import fetch_route
+from planner.services.routing import fetch_route, fetch_route_through_points
 from planner.services.station_locator import (
     estimate_start_price,
     fetch_route_station_candidates,
 )
+
+
+def _extract_city_state(location_query: str) -> tuple[str, str]:
+    parts = [part.strip() for part in location_query.split(",") if part.strip()]
+    if len(parts) >= 2:
+        return parts[0], parts[1]
+    if len(parts) == 1:
+        return parts[0], "-"
+    return "-", "-"
 
 
 def _serialize_stop_action(
@@ -18,14 +27,18 @@ def _serialize_stop_action(
     sequence: int,
     origin_latitude: float,
     origin_longitude: float,
+    origin_city: str,
+    origin_state: str,
 ) -> dict[str, Any]:
     node = action.node
 
     if node.station is None:
         return {
             "sequence": sequence,
-            "kind": "trip_start_estimate",
-            "label": "Trip Start (estimated local fuel price)",
+            "kind": "origin_estimate",
+            "name": "Origin Fuel Estimate",
+            "city": origin_city,
+            "state": origin_state,
             "price_per_gallon": round(float(node.price_per_gallon), 4),
             "gallons_purchased": round(action.gallons_purchased, 3),
             "estimated_cost": round(action.purchase_cost, 2),
@@ -63,9 +76,21 @@ def build_trip_plan(
     end_location: str,
     mpg: float = 10.0,
     max_range_miles: float = 500.0,
+    route_mode: str = "direct",
+    max_stop_detour_miles: float | None = None,
+    min_stop_gallons: float | None = None,
+    stop_penalty_usd: float | None = None,
 ) -> dict[str, Any]:
+    if min_stop_gallons is None:
+        min_stop_gallons = float(settings.DEFAULT_MIN_STOP_GALLONS)
+    if stop_penalty_usd is None:
+        stop_penalty_usd = float(settings.DEFAULT_STOP_PENALTY_USD)
+    if max_stop_detour_miles is None:
+        max_stop_detour_miles = settings.DEFAULT_MAX_STOP_DETOUR_MILES
+
     origin = geocode_location(start_location)
     destination = geocode_location(end_location)
+    origin_city, origin_state = _extract_city_state(start_location)
 
     route = fetch_route(
         start_lat=origin.latitude,
@@ -81,6 +106,14 @@ def build_trip_plan(
         route_cumulative_miles=route_cumulative_miles,
         corridor_miles=corridor_miles,
     )
+    candidate_count_before_detour_filter = len(candidates)
+    if max_stop_detour_miles is None:
+        effective_max_detour = corridor_miles
+    else:
+        effective_max_detour = min(max_stop_detour_miles, corridor_miles)
+    candidates = [
+        candidate for candidate in candidates if candidate.distance_to_route_miles <= effective_max_detour + 1e-6
+    ]
 
     route_total_miles = route.distance_miles
     nodes: list[FuelNode] = [
@@ -120,7 +153,24 @@ def build_trip_plan(
         nodes=nodes,
         mpg=mpg,
         max_range_miles=max_range_miles,
+        min_stop_gallons=min_stop_gallons,
+        stop_penalty_usd=stop_penalty_usd,
     )
+
+    rendered_route = route
+    route_api_calls = 1
+    if route_mode == "via_stops":
+        waypoint_points: list[tuple[float, float]] = [(origin.latitude, origin.longitude)]
+        for action in actions:
+            station = action.node.station
+            if station is None:
+                continue
+            waypoint_points.append((station.latitude, station.longitude))
+        waypoint_points.append((destination.latitude, destination.longitude))
+
+        if len(waypoint_points) > 2:
+            rendered_route = fetch_route_through_points(waypoint_points)
+            route_api_calls = 2
 
     return {
         "origin": {
@@ -138,11 +188,11 @@ def build_trip_plan(
             "source": destination.source,
         },
         "route": {
-            "distance_miles": round(route.distance_miles, 3),
-            "duration_minutes": round(route.duration_minutes, 2),
+            "distance_miles": round(rendered_route.distance_miles, 3),
+            "duration_minutes": round(rendered_route.duration_minutes, 2),
             "geometry": {
                 "type": "LineString",
-                "coordinates": route.geometry,
+                "coordinates": rendered_route.geometry,
             },
         },
         "fuel_plan": {
@@ -156,19 +206,28 @@ def build_trip_plan(
                     sequence=index,
                     origin_latitude=origin.latitude,
                     origin_longitude=origin.longitude,
+                    origin_city=origin_city,
+                    origin_state=origin_state,
                 )
                 for index, action in enumerate(actions, start=1)
             ],
         },
         "meta": {
-            "route_api_calls": 1,
-            "route_provider": route.provider,
-            "candidate_stations_considered": len(candidates),
+            "route_api_calls": route_api_calls,
+            "route_provider": rendered_route.provider,
+            "route_mode": route_mode,
+            "candidate_stations_considered": candidate_count_before_detour_filter,
+            "candidate_stations_after_detour_filter": len(candidates),
             "route_station_corridor_miles": corridor_miles,
+            "max_stop_detour_miles": effective_max_detour,
+            "min_stop_gallons": min_stop_gallons,
+            "stop_penalty_usd": stop_penalty_usd,
             "assumptions": [
                 "Trip starts with an empty tank and purchases fuel at the best next stop strategy.",
                 "Fuel station coordinates are approximated from city/state postal geography.",
-                "Route is fetched once from the configured provider and then reused from cache for repeated queries.",
+                "Direct mode fetches one origin-to-destination route and optimizes stops near it.",
+                "Via_stops mode fetches an additional waypoint route for map geometry through selected stops.",
+                "Optimizer can prune low-value stops using minimum gallons and per-stop penalty settings.",
             ],
         },
     }
