@@ -23,18 +23,18 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install dependencies
+      - name: Set up virtual environment
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements/development.txt
+          make setup
+          .venv/bin/pip install -r requirements/development.txt
 
       - name: Django checks
         run: |
-          python manage.py check
-          python manage.py makemigrations --check --dry-run
+          .venv/bin/python manage.py check
+          .venv/bin/python manage.py makemigrations --check --dry-run
 
       - name: Lint
         run: make lint
 
       - name: Test
-        run: python manage.py test
+        run: .venv/bin/python manage.py test
